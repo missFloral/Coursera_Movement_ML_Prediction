@@ -1,0 +1,130 @@
+---
+title: "Movement ML Prediction"
+author: "Wenting Feng"
+date: "1/14/2018"
+output: 
+  html_document:
+        keep_md: true
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+library(knitr)
+opts_chunk$set(fig.path="images/",
+               cache.path="cache/",
+               cache=FALSE,
+               echo=TRUE,
+               message=FALSE,
+               warning=FALSE)  
+```
+
+## Introduction
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+Using data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants, this project will predict the manner in which they did the exercise. 
+
+## Data Processing
+
+```{r}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(gbm)
+```
+
+### Download and read the data
+
+```{r}
+train_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+test_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+train_file <- "./data/ml_train.csv"
+test_file <- "./data/ml_test.csv"
+if (!file.exists("./data")) {
+  dir.create("./data")
+}
+if (!file.exists(train_file)) {
+  download.file(train_url, destfile = train_file, method="curl")
+}
+if (!file.exists(test_file)) {
+  download.file(test_url, destfile = test_file, method="curl")
+}
+```
+
+```{r}
+train_init <- read.csv("./data/ml_train.csv")
+test_init <- read.csv("./data/ml_test.csv")
+dim(train_init)
+dim(test_init)
+```
+
+The training data set contains 19622 observations and 160 variables, while the testing data set contains 20 observations and 160 variables. As is shown in the requirement, the "classe" variable in the training set is the outcome to predict.
+
+### Clean the data
+
+Since there're incomplete cases in the data sets, first we need to eliminate the missing values and some unnecessary variables. 
+
+```{r}
+# keep complete columns
+train_init <- train_init[, colSums(is.na(train_init)) == 0]
+test_init <- test_init[, colSums(is.na(test_init)) == 0]
+# clean up accelerometer measurements
+classe <- train_init$classe
+train_omit <- grepl("^X|timestamp|window", names(train_init))
+train_init <- train_init[, !train_omit]
+train_clean <- train_init[, sapply(train_init, is.numeric)]
+train_clean$classe <- classe
+test_omit <- grepl("^X|timestamp|window", names(test_init))
+test_init <- test_init[, !test_omit]
+test_clean <- test_init[, sapply(test_init, is.numeric)]
+```
+
+Therefore the cleaned training data set contains 19622 observations and 53 variables, while the testing data set contains 20 observations and 53 variables. And the `classe` variable remains in the data set. 
+
+### Slice the data
+
+Next we need to divide the cleaned training data set into a pure training data set (70%) and a validation data set (30%). The validation data set will be used to conduct cross validation later.
+
+```{r}
+set.seed(35353) 
+inTrain <- createDataPartition(y = train_clean$classe, p = 0.7, list = FALSE)
+train_data <- train_clean[inTrain, ]
+test_data <- train_clean[-inTrain, ]
+```
+
+## Data Modeling
+
+Here the model for behavior recognition is **Boosting** algorithm since it can be used with any subset of classifiers. And **3-fold cross validation** will be applied in the algorithm. 
+
+```{r}
+modelFit <- train(classe ~ ., method = "gbm", data = train_data, verbose = F, trControl = trainControl(method = "cv", number = 3))
+modelFit
+```
+
+Then we estimate the performance of the model on the validation data set. 
+
+```{r}
+predictFit <- predict(modelFit, test_data)
+confusionMatrix(test_data$classe, predictFit)
+accuracy <- postResample(predictFit, test_data$classe)
+accuracy
+sample_error <- 1 - as.numeric(confusionMatrix(test_data$classe, predictFit)$overall[1])
+sample_error
+```
+
+Now the estimated accuracy of the model is 96.07% and the expected out of sample error is 3.93%.
+
+## Predicting for the test data set
+
+```{r}
+pred <- predict(modelFit, test_clean[, -length(names(test_clean))])
+pred
+```
+
+## Appendix: Figures
+
+Decision Tree
+
+```{r}
+treeModel <- rpart(classe ~ ., data=train_data, method="class")
+prp(treeModel) 
+```
